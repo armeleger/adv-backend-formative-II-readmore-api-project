@@ -36,9 +36,30 @@ const updateAuthor = async (req, res) => {
 };
 
 // DELETE /authors/:id
+//
+// Delete policy (Requirement 4): Option A — BLOCK.
+// An author who still has books cannot be deleted; the client gets 409 and the
+// list of books that must be deleted or moved to another author first.
+//
+// Why: a bookstore's catalogue is tied to orders, invoices and reviews. Cascading
+// would silently destroy records of books that may already have been sold, and
+// reassigning would credit books to someone who didn't write them. Blocking
+// never loses or falsifies data, and the decision stays with a human.
+// Downside: removing a prolific author takes extra steps (deal with each book
+// first), and an author can't be removed while any of their books remain.
 const deleteAuthor = async (req, res) => {
-  const author = await Author.findByIdAndDelete(req.params.id);
+  const author = await Author.findById(req.params.id);
   if (!author) return res.status(404).json(notFoundMessage(req.params.id));
+
+  const books = await Book.find({ author: author._id }).select('title');
+  if (books.length > 0) {
+    return res.status(409).json({
+      message: `Cannot delete '${author.name}': they still have ${books.length} book(s). Delete or reassign these books first.`,
+      books,
+    });
+  }
+
+  await author.deleteOne();
   res.json({ message: `Author '${author.name}' deleted`, author });
 };
 
