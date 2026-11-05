@@ -89,7 +89,7 @@ const checkBookRules = async (book) => {
  */
 const validateAndSave = async (book, req, res) => {
   // An author value that isn't an ObjectId at all is still an orphan → 400.
-  const { author } = req.body;
+  const { author } = req.body ?? {}; // Express 5 leaves req.body undefined with no body
   if (author !== undefined && !mongoose.isValidObjectId(author)) {
     res.status(400).json({ message: `Author '${author}' is not a valid author id` });
     return null;
