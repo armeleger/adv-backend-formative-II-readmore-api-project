@@ -72,6 +72,42 @@ const getAuthorBooks = async (req, res) => {
   res.json({ author, count: books.length, books });
 };
 
+// GET /authors/:id/stats
+//
+// With no books there is no average or cheapest book, so those come back as
+// null (not 0 — an average price of 0 would wrongly suggest free books) and
+// bookCount is 0. The client can always rely on the same response shape.
+const getAuthorStats = async (req, res) => {
+  const author = await Author.findById(req.params.id);
+  if (!author) return res.status(404).json(notFoundMessage(req.params.id));
+
+  // Sorted cheapest → most expensive (title breaks price ties consistently).
+  const books = await Book.find({ author: author._id })
+    .select('title price')
+    .sort({ price: 1, title: 1 });
+
+  if (books.length === 0) {
+    return res.json({
+      author: author.name,
+      bookCount: 0,
+      averagePrice: null,
+      cheapestBook: null,
+      mostExpensiveBook: null,
+      message: 'This author has no books yet',
+    });
+  }
+
+  const totalPrice = books.reduce((sum, book) => sum + book.price, 0);
+
+  res.json({
+    author: author.name,
+    bookCount: books.length,
+    averagePrice: Math.round((totalPrice / books.length) * 100) / 100,
+    cheapestBook: books[0].title,
+    mostExpensiveBook: books[books.length - 1].title,
+  });
+};
+
 module.exports = {
   createAuthor,
   getAuthors,
@@ -79,4 +115,5 @@ module.exports = {
   updateAuthor,
   deleteAuthor,
   getAuthorBooks,
+  getAuthorStats,
 };
