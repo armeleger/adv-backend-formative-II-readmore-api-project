@@ -107,13 +107,6 @@ const validateAndSave = async (book, req, res) => {
   return book.populate('author', AUTHOR_DETAILS);
 };
 
-// POST /books
-const createBook = async (req, res) => {
-  const book = new Book(pick(req.body, BOOK_FIELDS));
-  const saved = await validateAndSave(book, req, res);
-  if (saved) res.status(201).json(saved);
-};
-
 // Escape regex special characters so user text is matched literally
 // (searching "c++" or "(1)" must not break or change the query).
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -207,6 +200,13 @@ const parsePagination = ({ page, limit }) => {
   if (pageSize > MAX_PAGE_SIZE) return { error: `limit cannot be more than ${MAX_PAGE_SIZE}` };
 
   return { page: pageNumber, limit: pageSize };
+};
+
+// POST /books
+const createBook = async (req, res) => {
+  const book = new Book(pick(req.body, BOOK_FIELDS));
+  const saved = await validateAndSave(book, req, res);
+  if (saved) res.status(201).json(saved);
 };
 
 // GET /books
