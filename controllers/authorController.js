@@ -1,4 +1,5 @@
 const Author = require('../models/Author');
+const Book = require('../models/Book');
 const pick = require('../utils/pick');
 
 const AUTHOR_FIELDS = ['name', 'country', 'bio'];
@@ -41,10 +42,20 @@ const deleteAuthor = async (req, res) => {
   res.json({ message: `Author '${author.name}' deleted`, author });
 };
 
+// GET /authors/:id/books
+const getAuthorBooks = async (req, res) => {
+  const author = await Author.findById(req.params.id);
+  if (!author) return res.status(404).json(notFoundMessage(req.params.id));
+
+  const books = await Book.find({ author: author._id }).sort({ publishedYear: 1 });
+  res.json({ author, count: books.length, books });
+};
+
 module.exports = {
   createAuthor,
   getAuthors,
   getAuthorById,
   updateAuthor,
   deleteAuthor,
+  getAuthorBooks,
 };
