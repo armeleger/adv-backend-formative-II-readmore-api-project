@@ -1,5 +1,182 @@
 # ReadMore API — Express + MongoDB (Mongoose)
 
+A REST API for the ReadMore bookstore. It manages **Authors** and **Books**, where every book belongs to exactly one author, and it enforces the store's business rules in the controllers.
+
+## Tech stack
+
+- **Node.js** + **Express 5**
+- **MongoDB** with **Mongoose** (models, references, `populate`)
+- **dotenv** for configuration, **nodemon** for development
+
+## Getting started
+
+```bash
+npm install
+cp .env.example .env      # then set MONGO_URI (local MongoDB or Atlas)
+npm run seed              # optional: load sample authors and books (wipes existing data)
+npm run dev               # or: npm start
+```
+
+The server connects to MongoDB first and only starts listening (default `http://localhost:3000`) once the connection has succeeded.
+
+| Variable    | Description                          | Example                                  |
+|-------------|--------------------------------------|------------------------------------------|
+| `PORT`      | Port the API listens on              | `3000`                                   |
+| `MONGO_URI` | MongoDB connection string            | `mongodb://127.0.0.1:27017/readmore`     |
+
+`requests.http` contains a ready-made request for every endpoint and business rule (VS Code **REST Client** extension).
+
+## Project structure
+
+```
+├── server.js              entry point: load .env, connect to MongoDB, then listen
+├── app.js                 Express app: JSON body parsing, routes, error handling
+├── config/db.js           Mongoose connection
+├── models/
+│   ├── Author.js          name (required), country, bio
+│   └── Book.js            title, genre, price, publishedYear (all required), author → Author
+├── controllers/
+│   ├── authorController.js
+│   └── bookController.js  business rules, dynamic filter builder, pagination
+├── routes/
+│   ├── authorRoutes.js    URL → controller wiring only
+│   └── bookRoutes.js
+├── middleware/
+│   ├── errorHandler.js    404 fallback + central error → status-code mapping
+│   └── validateObjectId.js
+├── utils/pick.js          whitelist request-body fields
+└── scripts/seed.js        sample data
+```
+
+Routes only map URLs to controller functions. All the logic (reading the request, applying rules, querying the database, choosing the status code) lives in the controllers. Express 5 passes errors from async handlers to the central error handler automatically, so controllers don't repeat `try/catch` blocks.
+
+## Data model
+
+```
+authors ──< books
+```
+
+`Book.author` is an `ObjectId` with `ref: 'Author'`. Reads of books use `.populate('author', 'name country bio')`, so the full author details appear instead of a bare id.
+
+## Endpoints
+
+### Authors
+
+| Method   | Path                   | Description                                  |
+|----------|------------------------|----------------------------------------------|
+| `POST`   | `/authors`             | Create an author                             |
+| `GET`    | `/authors`             | List all authors (sorted by name)            |
+| `GET`    | `/authors/:id`         | Get one author                               |
+| `PUT`    | `/authors/:id`         | Update an author                             |
+| `DELETE` | `/authors/:id`         | Delete an author (blocked if they have books)|
+| `GET`    | `/authors/:id/books`   | All books by that author                     |
+| `GET`    | `/authors/:id/stats`   | Book count, average price, cheapest/most expensive |
+
+### Books
+
+| Method   | Path          | Description                                        |
+|----------|---------------|----------------------------------------------------|
+| `POST`   | `/books`      | Create a book for an existing author               |
+| `GET`    | `/books`      | List books: filter, sort and paginate (author populated) |
+| `GET`    | `/books/:id`  | Get one book (author populated)                    |
+| `PUT`    | `/books/:id`  | Update a book                                      |
+| `DELETE` | `/books/:id`  | Delete a book                                      |
+
+`GET /` is a health check.
+
+### Status codes
+
+| Code  | When                                                                     |
+|-------|--------------------------------------------------------------------------|
+| `200` | Successful read / update / delete                                        |
+| `201` | Created                                                                  |
+| `400` | Missing required fields, wrong types, invalid JSON, orphan author id, bad query parameter |
+| `404` | No author/book with that id (including malformed ids), unknown route     |
+| `409` | Duplicate title for the same author, or deleting an author who still has books |
+| `422` | Price ≤ 0, or `publishedYear` not a whole year between 1450 and the current year |
+
+## Business rules (Part 4)
+
+All book rules run in one place (`checkBookRules` in `bookController.js`) against the book **as it would be saved**. Create and update therefore share exactly the same checks, and an update is validated together with the book's existing values.
+
+### 1. No orphan books (400)
+`required: true` only checks that *some* value was sent. Mongoose doesn't check that an Author with that id actually exists, and MongoDB has no foreign keys. So before saving, the controller runs `Author.exists({ _id })` and rejects with **400** if it fails. An id that isn't a valid ObjectId at all is also rejected with **400**.
+
+### 2. No duplicate titles per author (409)
+The controller looks up a book with the **same author** and the same title, using a case-insensitive collation (`{ locale: 'en', strength: 2 }`), so `"the silent sea"` matches `"The Silent Sea"`. Titles are trimmed first. The query is scoped to the author, so two different authors may each have a book called "Home". On update, the book being edited is excluded so it never clashes with itself.
+
+A unique compound index on `{ author, title }` with the same collation backs this up. If two identical requests arrive at the same instant and both pass the check, the database still rejects the second one, and the error handler turns that into **409**.
+
+### 3. Values the schema can't express (422)
+`price` must be greater than 0. `publishedYear` must be a whole number from 1450 (the printing press) to the **current** year. "The current year" changes over time, which is why this lives in code rather than as a fixed schema `max`. These rules check data that is well-formed but not allowed, so they return **422**. Wrong types (e.g. `"price": "abc"`) are a malformed request and return **400**.
+
+### 4. Deleting an author who still has books: **Option A, Block (409)**
+`DELETE /authors/:id` returns **409** if the author still has books, along with the list of those books so the client knows what to delete or reassign first.
+
+**Why block?**
+- A real bookstore's catalogue is linked to orders, invoices, reviews and stock. **Cascade** would silently wipe records of books that may already have been sold. Once books have sold, losing them means losing business history.
+- **Reassign** keeps the books but credits them to someone who didn't write them, which is misleading to customers and wrong for royalties and copyright.
+- **Block** never loses or falsifies data. It makes the destructive decision explicit, leaves it to a human, and is easy to change later (cascade or reassign can be added as a deliberate admin action).
+
+**Downside:** removing an author takes extra work. Every one of their books has to be deleted or moved first, which is tedious for a prolific author, and the author record stays until that's done.
+
+### 5. Search & filter on `GET /books`
+All parameters are optional and can be combined freely:
+
+| Param                  | Effect                                                             |
+|------------------------|--------------------------------------------------------------------|
+| `genre`                | exact genre, case-insensitive                                      |
+| `minPrice`, `maxPrice` | price range: either one, both, or neither                          |
+| `author`               | books by that author id                                            |
+| `search`               | title contains the text (case-insensitive; special characters matched literally) |
+| `sort` + `order`       | `price`, `title` or `publishedYear`; `asc` (default) or `desc`     |
+| `page` + `limit`       | pagination (see below)                                             |
+
+The query is **built dynamically**. `buildBookQuery` starts from an empty filter `{}`, and each parameter that is present adds its own piece:
+
+```
+?genre=Thriller            → { genre: 'Thriller' }
+?minPrice=10               → { price: { $gte: 10 } }
+?minPrice=10&maxPrice=30   → { price: { $gte: 10, $lte: 30 } }
+(no parameters)            → {}   (every book)
+```
+
+Invalid values (a non-numeric price, `minPrice > maxPrice`, an unknown sort field, a bad order, a malformed author id, or a parameter given twice) are rejected with **400** and a message. Unknown parameters are ignored. `_id` is always used as a final tie-breaker, so the order is stable across pages.
+
+### 6. Author statistics
+`GET /authors/:id/stats`
+
+```json
+{
+  "author": "Chinua Achebe",
+  "bookCount": 4,
+  "averagePrice": 21.5,
+  "cheapestBook": "Things Fall Apart",
+  "mostExpensiveBook": "Anthills of the Savannah"
+}
+```
+
+The average is rounded to 2 decimal places. **No books:** `bookCount` is `0`, while `averagePrice`, `cheapestBook` and `mostExpensiveBook` are `null` and a `message` explains why. `null` means "doesn't apply", whereas an average of `0` would wrongly suggest free books. The response shape is the same either way, so clients don't break. Unknown author ids return **404**.
+
+### Challenge: pagination
+`GET /books` always responds with:
+
+```json
+{ "page": 2, "limit": 3, "total": 10, "totalPages": 4, "results": [ ... ] }
+```
+
+- No `page`/`limit` → every matching book (`limit: null`), as the "no params returns everything" rule requires.
+- `page` only → 10 per page. `limit` only → page 1. `limit` is capped at 100.
+- `total` counts all books matching the filters, not just the current page.
+- `page`/`limit` must be whole numbers ≥ 1 (otherwise **400**). A page past the end returns an empty `results` array.
+
+---
+
+<details>
+<summary>Original assignment brief</summary>
+
+# ReadMore API — Express + MongoDB (Mongoose)
+
 Your first backend API assignment. Build a small REST API for a bookstore using **Express.js**, with **MongoDB** as the database and **Mongoose** as the modelling layer.
 
 There are **two entities** — **Author** and **Book** — and they are **linked**: one author can have many books, and every book belongs to one author. You will model them, connect to MongoDB, and build endpoints for each.
@@ -198,3 +375,5 @@ Submit a **a Github repository link** containing your project code. The reposito
 
 Good luck — build it one endpoint at a time, and test each in your API client before moving on.
 ---
+
+</details>
