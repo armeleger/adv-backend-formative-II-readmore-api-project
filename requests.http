@@ -1,0 +1,176 @@
+### ReadMore API — sample requests
+# Open in VS Code with the "REST Client" extension and click "Send Request".
+# Run `npm run seed` first, then paste real ids into the variables below
+# (copy them from GET /authors and GET /books).
+
+@baseUrl = http://localhost:3000
+@authorId = PASTE_AN_AUTHOR_ID
+@bookId = PASTE_A_BOOK_ID
+@fakeId = 507f1f77bcf86cd799439011
+
+### Health check
+GET {{baseUrl}}/
+
+############################################
+# Authors
+############################################
+
+### Create an author
+POST {{baseUrl}}/authors
+Content-Type: application/json
+
+{
+  "name": "Chinua Achebe",
+  "country": "Nigeria",
+  "bio": "Novelist, poet and critic."
+}
+
+### Get all authors
+GET {{baseUrl}}/authors
+
+### Get one author
+GET {{baseUrl}}/authors/{{authorId}}
+
+### Get one author — not found (404)
+GET {{baseUrl}}/authors/{{fakeId}}
+
+### Update an author
+PUT {{baseUrl}}/authors/{{authorId}}
+Content-Type: application/json
+
+{
+  "bio": "Updated biography."
+}
+
+### Delete an author (409 if they still have books — see Rule 4)
+DELETE {{baseUrl}}/authors/{{authorId}}
+
+### All books by an author
+GET {{baseUrl}}/authors/{{authorId}}/books
+
+### Author statistics
+GET {{baseUrl}}/authors/{{authorId}}/stats
+
+############################################
+# Books
+############################################
+
+### Create a book for an author
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "title": "The Silent Sea",
+  "genre": "Thriller",
+  "price": 24.99,
+  "publishedYear": 2021,
+  "author": "{{authorId}}"
+}
+
+### Get all books (author populated)
+GET {{baseUrl}}/books
+
+### Get one book (author populated)
+GET {{baseUrl}}/books/{{bookId}}
+
+### Get one book — not found (404)
+GET {{baseUrl}}/books/{{fakeId}}
+
+### Update a book
+PUT {{baseUrl}}/books/{{bookId}}
+Content-Type: application/json
+
+{
+  "price": 19.99
+}
+
+### Delete a book
+DELETE {{baseUrl}}/books/{{bookId}}
+
+############################################
+# Part 4 — business rules
+############################################
+
+### Rule 1 — orphan book: author id does not exist → 400
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "title": "Orphan Book",
+  "genre": "Drama",
+  "price": 10,
+  "publishedYear": 2020,
+  "author": "{{fakeId}}"
+}
+
+### Rule 2 — duplicate title for the same author (case-insensitive) → 409
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "title": "the silent sea",
+  "genre": "Thriller",
+  "price": 24.99,
+  "publishedYear": 2021,
+  "author": "{{authorId}}"
+}
+
+### Rule 3 — price zero or negative → 422
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "title": "Free Book",
+  "genre": "Drama",
+  "price": 0,
+  "publishedYear": 2020,
+  "author": "{{authorId}}"
+}
+
+### Rule 3 — publishedYear in the future → 422
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "title": "Book From The Future",
+  "genre": "Sci-Fi",
+  "price": 15,
+  "publishedYear": 2999,
+  "author": "{{authorId}}"
+}
+
+### Rule 3 — publishedYear before 1450 → 422
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "title": "Ancient Scroll",
+  "genre": "History",
+  "price": 15,
+  "publishedYear": 1200,
+  "author": "{{authorId}}"
+}
+
+### Rule 4 — delete an author who still has books → 409 (Block policy)
+DELETE {{baseUrl}}/authors/{{authorId}}
+
+### Rule 5 — filters combined (README example)
+GET {{baseUrl}}/books?genre=Thriller&minPrice=10&maxPrice=30&search=sea&sort=price&order=asc
+
+### Rule 5 — genre + max price, most expensive first
+GET {{baseUrl}}/books?genre=Fiction&maxPrice=20&sort=price&order=desc
+
+### Rule 5 — price range only
+GET {{baseUrl}}/books?minPrice=15&maxPrice=25
+
+### Rule 5 — one author's books, newest first
+GET {{baseUrl}}/books?author={{authorId}}&sort=publishedYear&order=desc
+
+### Rule 5 — invalid parameter → 400
+GET {{baseUrl}}/books?minPrice=abc
+
+### Rule 6 — author stats (try an author with no books too)
+GET {{baseUrl}}/authors/{{authorId}}/stats
+
+### Challenge — pagination
+GET {{baseUrl}}/books?page=2&limit=3&sort=title
