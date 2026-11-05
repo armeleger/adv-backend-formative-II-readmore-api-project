@@ -8,6 +8,9 @@ const BOOK_FIELDS = ['title', 'genre', 'price', 'publishedYear', 'author'];
 // Fields of the author to embed when populating a book.
 const AUTHOR_DETAILS = 'name country bio';
 
+// Compare strings ignoring case (but not accents).
+const CASE_INSENSITIVE = { locale: 'en', strength: 2 };
+
 const notFoundMessage = (id) => ({ message: `No book found with id '${id}'` });
 
 /**
@@ -23,6 +26,24 @@ const checkBookRules = async (book) => {
     const authorExists = await Author.exists({ _id: book.author });
     if (!authorExists) {
       return { status: 400, message: `Author '${book.author}' does not exist` };
+    }
+  }
+
+  // Rule 2 — No duplicate titles *per author*, case-insensitive. Scoping the
+  // query to this author means two different authors may share a title.
+  // Collation strength 2 compares ignoring case ("the silent sea" = "The Silent Sea").
+  if (book.isNew || book.isModified('title') || book.isModified('author')) {
+    const duplicate = await Book.findOne({
+      _id: { $ne: book._id }, // an updated book must not clash with itself
+      author: book.author,
+      title: book.title,
+    }).collation(CASE_INSENSITIVE);
+
+    if (duplicate) {
+      return {
+        status: 409,
+        message: `This author already has a book titled '${duplicate.title}'`,
+      };
     }
   }
 
