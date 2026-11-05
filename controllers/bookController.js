@@ -14,6 +14,9 @@ const CASE_INSENSITIVE = { locale: 'en', strength: 2 };
 // Roughly when the printing press arrived; nothing earlier counts as a "book" here.
 const MIN_PUBLISHED_YEAR = 1450;
 
+// Fields GET /books may be sorted by.
+const SORTABLE_FIELDS = ['price', 'title', 'publishedYear'];
+
 const notFoundMessage = (id) => ({ message: `No book found with id '${id}'` });
 
 /**
@@ -107,9 +110,85 @@ const createBook = async (req, res) => {
   if (saved) res.status(201).json(saved);
 };
 
-// GET /books
+// Escape regex special characters so user text is matched literally
+// (searching "c++" or "(1)" must not break or change the query).
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Build the Mongo filter and sort for GET /books from whichever query params
+ * are present. Each param adds its own piece to one filter object, so any
+ * combination works without writing a query per combination:
+ *   ?genre=Thriller                  → { genre: 'Thriller' }
+ *   ?minPrice=10                     → { price: { $gte: 10 } }
+ *   ?minPrice=10&maxPrice=30         → { price: { $gte: 10, $lte: 30 } }
+ *   (no params)                      → {}  (everything)
+ * Returns { filter, sort } or { error } for a bad parameter.
+ */
+const buildBookQuery = (query) => {
+  const filter = {};
+
+  // Express gives an array when a param is repeated (?genre=a&genre=b).
+  for (const [key, value] of Object.entries(query)) {
+    if (typeof value !== 'string') return { error: `Query parameter '${key}' must be given once` };
+  }
+
+  const { genre, minPrice, maxPrice, author, search, sort, order } = query;
+
+  if (genre) filter.genre = genre; // matched case-insensitively via collation
+
+  if (minPrice !== undefined || maxPrice !== undefined) {
+    filter.price = {};
+    for (const [name, value, operator] of [
+      ['minPrice', minPrice, '$gte'],
+      ['maxPrice', maxPrice, '$lte'],
+    ]) {
+      if (value === undefined) continue;
+      const number = Number(value);
+      if (value.trim() === '' || !Number.isFinite(number)) {
+        return { error: `${name} must be a number (received '${value}')` };
+      }
+      filter.price[operator] = number;
+    }
+    if (filter.price.$gte > filter.price.$lte) {
+      return { error: 'minPrice cannot be greater than maxPrice' };
+    }
+  }
+
+  if (author !== undefined) {
+    if (!mongoose.isValidObjectId(author)) {
+      return { error: `author must be a valid author id (received '${author}')` };
+    }
+    filter.author = author;
+  }
+
+  if (search) filter.title = { $regex: escapeRegex(search), $options: 'i' };
+
+  // Sorting: only whitelisted fields; _id as a tie-breaker keeps the order stable.
+  const sortSpec = {};
+  if (sort !== undefined) {
+    if (!SORTABLE_FIELDS.includes(sort)) {
+      return { error: `sort must be one of: ${SORTABLE_FIELDS.join(', ')}` };
+    }
+    const direction = (order || 'asc').toLowerCase();
+    if (!['asc', 'desc'].includes(direction)) {
+      return { error: "order must be 'asc' or 'desc'" };
+    }
+    sortSpec[sort] = direction === 'asc' ? 1 : -1;
+  }
+  sortSpec._id = 1;
+
+  return { filter, sort: sortSpec };
+};
+
+// GET /books  — optional: genre, minPrice, maxPrice, author, search, sort, order
 const getBooks = async (req, res) => {
-  const books = await Book.find().populate('author', AUTHOR_DETAILS);
+  const { filter, sort, error } = buildBookQuery(req.query);
+  if (error) return res.status(400).json({ message: error });
+
+  const books = await Book.find(filter)
+    .collation(CASE_INSENSITIVE)
+    .sort(sort)
+    .populate('author', AUTHOR_DETAILS);
   res.json(books);
 };
 
