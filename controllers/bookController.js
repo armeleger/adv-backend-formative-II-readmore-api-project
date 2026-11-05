@@ -11,6 +11,9 @@ const AUTHOR_DETAILS = 'name country bio';
 // Compare strings ignoring case (but not accents).
 const CASE_INSENSITIVE = { locale: 'en', strength: 2 };
 
+// Roughly when the printing press arrived; nothing earlier counts as a "book" here.
+const MIN_PUBLISHED_YEAR = 1450;
+
 const notFoundMessage = (id) => ({ message: `No book found with id '${id}'` });
 
 /**
@@ -20,6 +23,29 @@ const notFoundMessage = (id) => ({ message: `No book found with id '${id}'` });
  * Returns { status, message } describing the first broken rule, or null.
  */
 const checkBookRules = async (book) => {
+  // Rule 3 — Values the schema can't express. Checked first because they
+  // need no database round-trip. The year limit is "now", which changes,
+  // so it belongs in code rather than as a fixed `max` on the schema.
+  const currentYear = new Date().getFullYear();
+
+  if (book.price <= 0) {
+    return { status: 422, message: `price must be greater than 0 (received ${book.price})` };
+  }
+
+  if (!Number.isInteger(book.publishedYear)) {
+    return {
+      status: 422,
+      message: `publishedYear must be a whole year (received ${book.publishedYear})`,
+    };
+  }
+
+  if (book.publishedYear < MIN_PUBLISHED_YEAR || book.publishedYear > currentYear) {
+    return {
+      status: 422,
+      message: `publishedYear must be between ${MIN_PUBLISHED_YEAR} and ${currentYear} (received ${book.publishedYear})`,
+    };
+  }
+
   // Rule 1 — No orphan books. `required` only checks that *some* ObjectId
   // was given; it never checks that an Author with that id exists.
   if (book.isNew || book.isModified('author')) {
