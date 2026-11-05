@@ -17,6 +17,10 @@ const MIN_PUBLISHED_YEAR = 1450;
 // Fields GET /books may be sorted by.
 const SORTABLE_FIELDS = ['price', 'title', 'publishedYear'];
 
+// Pagination for GET /books.
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 100;
+
 const notFoundMessage = (id) => ({ message: `No book found with id '${id}'` });
 
 /**
@@ -180,16 +184,59 @@ const buildBookQuery = (query) => {
   return { filter, sort: sortSpec };
 };
 
-// GET /books  — optional: genre, minPrice, maxPrice, author, search, sort, order
+/**
+ * Read `page` and `limit`. With neither present every matching book is
+ * returned (limit: null). `page` alone uses DEFAULT_PAGE_SIZE; `limit` alone
+ * starts at page 1. Returns { page, limit } or { error }.
+ */
+const parsePagination = ({ page, limit }) => {
+  const parsePositiveInt = (name, value) => {
+    const number = Number(value);
+    return Number.isInteger(number) && number >= 1
+      ? number
+      : { error: `${name} must be a whole number of at least 1 (received '${value}')` };
+  };
+
+  if (page === undefined && limit === undefined) return { page: 1, limit: null };
+
+  const pageNumber = page === undefined ? 1 : parsePositiveInt('page', page);
+  if (pageNumber.error) return pageNumber;
+
+  const pageSize = limit === undefined ? DEFAULT_PAGE_SIZE : parsePositiveInt('limit', limit);
+  if (pageSize.error) return pageSize;
+  if (pageSize > MAX_PAGE_SIZE) return { error: `limit cannot be more than ${MAX_PAGE_SIZE}` };
+
+  return { page: pageNumber, limit: pageSize };
+};
+
+// GET /books
+// optional: genre, minPrice, maxPrice, author, search, sort, order, page, limit
 const getBooks = async (req, res) => {
   const { filter, sort, error } = buildBookQuery(req.query);
   if (error) return res.status(400).json({ message: error });
 
-  const books = await Book.find(filter)
+  const pagination = parsePagination(req.query);
+  if (pagination.error) return res.status(400).json({ message: pagination.error });
+  const { page, limit } = pagination;
+
+  const findQuery = Book.find(filter)
     .collation(CASE_INSENSITIVE)
     .sort(sort)
     .populate('author', AUTHOR_DETAILS);
-  res.json(books);
+  if (limit) findQuery.skip((page - 1) * limit).limit(limit);
+
+  const [total, results] = await Promise.all([
+    Book.countDocuments(filter).collation(CASE_INSENSITIVE),
+    findQuery,
+  ]);
+
+  res.json({
+    page,
+    limit,
+    total,
+    totalPages: limit ? Math.ceil(total / limit) : total > 0 ? 1 : 0,
+    results,
+  });
 };
 
 // GET /books/:id
