@@ -12,7 +12,9 @@ A REST API for the ReadMore bookstore. It manages **Authors** and **Books**, whe
 
 ```bash
 npm install
-cp .env.example .env      # then set MONGO_URI (local MongoDB or Atlas)
+# create a .env file in the project root (see the table below), e.g.:
+#   PORT=3000
+#   MONGO_URI=mongodb://127.0.0.1:27017/readmore
 npm run seed              # optional: load sample authors and books (wipes existing data)
 npm run dev               # or: npm start
 ```
