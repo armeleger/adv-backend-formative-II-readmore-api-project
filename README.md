@@ -2,6 +2,9 @@
 
 A REST API for the ReadMore bookstore. It manages **Authors** and **Books**, where every book belongs to exactly one author, and it enforces the store's business rules in the controllers.
 
+## Video Link
+[Watch the demo video here](https://youtu.be/NFybwTCcS8c?si=KSDdQV3RshsV38lf)
+
 ## Tech stack
 
 - **Node.js** + **Express 5**
@@ -12,11 +15,9 @@ A REST API for the ReadMore bookstore. It manages **Authors** and **Books**, whe
 
 ```bash
 npm install
-# create a .env file in the project root (see the table below), e.g.:
-#   PORT=3000
-#   MONGO_URI=mongodb://127.0.0.1:27017/readmore
-npm run seed              # optional: load sample authors and books (wipes existing data)
-npm run dev               # or: npm start
+cp .env    
+npm run seed             
+npm run dev              
 ```
 
 The server connects to MongoDB first and only starts listening (default `http://localhost:3000`) once the connection has succeeded.
